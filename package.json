@@ -1,0 +1,16 @@
+{
+  "name": "resq-ai-root",
+  "version": "1.0.0",
+  "description": "RESQ-AI: AI-Driven Disaster Response Coordination Platform",
+  "scripts": {
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "start": "node server/src/index.js",
+    "build": "cd client && npm run build",
+    "migrate": "cd server && npm run migrate",
+    "install-all": "cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["disaster-response", "ai", "postgis", "osrm", "socketio", "emergency"],
+  "author": "RESQ-AI Team",
+  "license": "ISC"
+}
