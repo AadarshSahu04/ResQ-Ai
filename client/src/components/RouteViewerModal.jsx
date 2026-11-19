@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Navigation,
   AlertTriangle,
@@ -189,7 +189,7 @@ export function RouteViewerModal({ routeData, onClose, onClearRoute, onSelectRou
                     <span>1. Clear Roadway (Ground Convoy)</span>
                   </div>
                   <span className="font-mono font-bold text-emerald-700 text-xs">
-                    {((multimodal.road1?.distance || multimodal.greenRoad.distance) / 1000).toFixed(1)} km • {formatDuration(multimodal.road1?.duration || multimodal.greenRoad.duration)}
+                    {((multimodal.road1?.distance || multimodal.greenRoad?.distance || 0) / 1000).toFixed(1)} km • {formatDuration(multimodal.road1?.duration || multimodal.greenRoad?.duration || 0)}
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-800">
