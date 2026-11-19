@@ -146,7 +146,9 @@ export function RescueTeamView() {
     try {
       const destCoords = inc.location.coordinates; // [lon, lat]
       const routeRes = await api.calculateRoute(originCoords, destCoords, inc.id);
-      setActiveRouteData(routeRes);
+      const defaultMode = routeRes.selectedMode || (routeRes.alternativeRoute ? 'safe' : (routeRes.multimodal?.isMultimodal ? 'multimodal' : 'safe'));
+      setRouteViewMode(defaultMode);
+      setActiveRouteData({ ...routeRes, selectedMode: defaultMode });
 
       if (routeRes.route?.intersectsHazard || routeRes.blockedRoute) {
         setStatusMessage(`⚠️ Direct path blocked by hazard! Safe alternative detour corridor computed.`);
@@ -517,20 +519,26 @@ export function RescueTeamView() {
                     <div className="bg-slate-50 p-1.5 rounded-xl border border-slate-200 flex items-center gap-1.5 flex-wrap">
                       {activeRouteData.multimodal?.isMultimodal && (
                         <button
-                          onClick={() => setRouteViewMode('multimodal')}
+                          onClick={() => {
+                            setRouteViewMode('multimodal');
+                            setActiveRouteData(prev => prev ? { ...prev, selectedMode: 'multimodal' } : null);
+                          }}
                           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                             routeViewMode === 'multimodal'
                               ? 'bg-blue-700 text-white shadow-sm'
                               : 'text-slate-600 hover:text-slate-900'
                           }`}
                         >
-                          <span>🚦 Multimodal Route (Road & Air)</span>
+                          <span>🚦 Multimodal Relay (Road & Hazard Crossing)</span>
                         </button>
                       )}
 
                       {activeRouteData.alternativeRoute && (
                         <button
-                          onClick={() => setRouteViewMode('safe')}
+                          onClick={() => {
+                            setRouteViewMode('safe');
+                            setActiveRouteData(prev => prev ? { ...prev, selectedMode: 'safe' } : null);
+                          }}
                           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                             routeViewMode === 'safe'
                               ? 'bg-emerald-600 text-white shadow-sm'
@@ -544,7 +552,10 @@ export function RescueTeamView() {
 
                       {activeRouteData.blockedRoute && (
                         <button
-                          onClick={() => setRouteViewMode('blocked')}
+                          onClick={() => {
+                            setRouteViewMode('blocked');
+                            setActiveRouteData(prev => prev ? { ...prev, selectedMode: 'blocked' } : null);
+                          }}
                           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                             routeViewMode === 'blocked'
                               ? 'bg-red-600 text-white shadow-sm'
@@ -558,36 +569,88 @@ export function RescueTeamView() {
                     </div>
                   )}
 
-                  {/* Multimodal Transport Breakdown Cards */}
+                  {/* Multimodal Transport Breakdown Cards: Roadway -> Boat/Heli -> Resumed Roadway */}
                   {routeViewMode === 'multimodal' && activeRouteData.multimodal?.isMultimodal && (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                      {activeRouteData.multimodal.greenRoad && (
+                      {/* Leg 1: Pre-Hazard Clear Road */}
+                      <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between text-emerald-900 font-bold">
+                          <span>🚗 1. Clear Roadway</span>
+                          <span className="font-mono">
+                            {((activeRouteData.multimodal.road1?.distance || activeRouteData.multimodal.greenRoad?.distance || 0) / 1000).toFixed(1)} km
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-emerald-700 font-semibold">
+                          Rapid Response Ground Vehicle
+                        </div>
+                        <div className="text-[10px] text-emerald-600">
+                          Clear road network up to hazard boundary.
+                        </div>
+                      </div>
+
+                      {/* Leg 2: Hazard Crossing (Rescue Boat for Floods, Helicopter for Blockages) */}
+                      {activeRouteData.multimodal.hazardTransit && (
+                        <div
+                          className={`p-2.5 rounded-xl border text-xs space-y-1 ${
+                            activeRouteData.multimodal.hazardTransit.type === 'boat'
+                              ? 'bg-sky-50 border-sky-300 text-sky-950'
+                              : 'bg-indigo-50 border-indigo-200 text-indigo-950'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between font-bold">
+                            <span>
+                              {activeRouteData.multimodal.hazardTransit.type === 'boat'
+                                ? '🚤 2. Flood Crossing'
+                                : '🚁 2. Road Airlift'}
+                            </span>
+                            <span className="font-mono">
+                              {(activeRouteData.multimodal.hazardTransit.distance / 1000).toFixed(1)} km
+                            </span>
+                          </div>
+                          <div
+                            className={`text-[10px] font-semibold ${
+                              activeRouteData.multimodal.hazardTransit.type === 'boat'
+                                ? 'text-sky-700'
+                                : 'text-indigo-700'
+                            }`}
+                          >
+                            {activeRouteData.multimodal.hazardTransit.type === 'boat'
+                              ? 'Tactical Rescue Boat'
+                              : 'Air Rescue Helicopter'}
+                          </div>
+                          <div className="text-[10px] opacity-80">
+                            {activeRouteData.multimodal.hazardTransit.type === 'boat'
+                              ? 'Water crossing through flooded sector only.'
+                              : 'Aerial hop over road blockage sector only.'}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Leg 3: Post-Hazard Resumed Roadway */}
+                      {activeRouteData.multimodal.road2 ? (
                         <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
                           <div className="flex items-center justify-between text-emerald-900 font-bold">
-                            <span>🚗 1. Clear Road</span>
-                            <span className="font-mono">{(activeRouteData.multimodal.greenRoad.distance / 1000).toFixed(1)} km</span>
+                            <span>🚗 3. Resumed Road</span>
+                            <span className="font-mono">
+                              {(activeRouteData.multimodal.road2.distance / 1000).toFixed(1)} km
+                            </span>
                           </div>
-                          <div className="text-[10px] text-emerald-700 font-semibold">{activeRouteData.multimodal.greenRoad.vehicle}</div>
+                          <div className="text-[10px] text-emerald-700 font-semibold">
+                            Rapid Response Ground Vehicle
+                          </div>
+                          <div className="text-[10px] text-emerald-600">
+                            Resumes roadway transit to destination.
+                          </div>
                         </div>
-                      )}
-
-                      {activeRouteData.multimodal.yellowRoad && (
-                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1">
-                          <div className="flex items-center justify-between text-amber-900 font-bold">
-                            <span>🚜 2. Caution Road</span>
-                            <span className="font-mono">{(activeRouteData.multimodal.yellowRoad.distance / 1000).toFixed(1)} km</span>
+                      ) : (
+                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                          <div className="flex items-center justify-between text-slate-800 font-bold">
+                            <span>🎯 Destination Target</span>
+                            <span className="font-mono">Arrived</span>
                           </div>
-                          <div className="text-[10px] text-amber-700 font-semibold">{activeRouteData.multimodal.yellowRoad.vehicle}</div>
-                        </div>
-                      )}
-
-                      {activeRouteData.multimodal.blueAir && (
-                        <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-xs space-y-1">
-                          <div className="flex items-center justify-between text-blue-900 font-bold">
-                            <span>🚁 3. Air Rescue</span>
-                            <span className="font-mono">{(activeRouteData.multimodal.blueAir.distance / 1000).toFixed(1)} km</span>
+                          <div className="text-[10px] text-slate-500">
+                            Target reached directly at hazard staging border.
                           </div>
-                          <div className="text-[10px] text-blue-700 font-semibold">{activeRouteData.multimodal.blueAir.vehicle}</div>
                         </div>
                       )}
                     </div>
@@ -618,14 +681,24 @@ export function RescueTeamView() {
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
                       <span className="text-[10px] text-slate-500 uppercase font-bold">Total Transit Distance</span>
                       <div className="text-lg font-black text-blue-950 mt-0.5">
-                        {displayRoute ? (displayRoute.distance / 1000).toFixed(2) : '0.00'} km
+                        {routeViewMode === 'multimodal' && activeRouteData.multimodal?.totalDistance
+                          ? (activeRouteData.multimodal.totalDistance / 1000).toFixed(2)
+                          : displayRoute
+                          ? (displayRoute.distance / 1000).toFixed(2)
+                          : '0.00'}{' '}
+                        km
                       </div>
                     </div>
 
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
                       <span className="text-[10px] text-slate-500 uppercase font-bold">Estimated Transit Time</span>
                       <div className="text-lg font-black text-orange-600 mt-0.5">
-                        {displayRoute ? Math.round(displayRoute.duration / 60) : 0} mins
+                        {routeViewMode === 'multimodal' && activeRouteData.multimodal?.totalDuration
+                          ? Math.round(activeRouteData.multimodal.totalDuration / 60)
+                          : displayRoute
+                          ? Math.round(displayRoute.duration / 60)
+                          : 0}{' '}
+                        mins
                       </div>
                     </div>
 

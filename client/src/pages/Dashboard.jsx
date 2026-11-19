@@ -812,8 +812,12 @@ export function Dashboard() {
           routeData={activeRouteData}
           onClose={() => setActiveRouteData(null)}
           onClearRoute={() => setActiveRouteData(null)}
-          onSelectRouteVariant={(variant) => {
-            setActiveRouteData((prev) => ({ ...prev, route: variant }));
+          onSelectRouteVariant={(variant, mode) => {
+            setActiveRouteData((prev) => ({
+              ...prev,
+              route: variant,
+              selectedMode: mode,
+            }));
           }}
         />
       )}

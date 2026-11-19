@@ -115,8 +115,22 @@ function createHeliIcon() {
   return L.divIcon({
     className: 'custom-heli-pin',
     html: `
-      <div class="bg-blue-600 border-2 border-white text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center animate-bounce">
+      <div class="bg-indigo-600 border-2 border-white text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center animate-bounce">
         <span style="font-size: 14px;">🚁</span>
+      </div>
+    `,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
+}
+
+// Custom Tactical Rescue Boat Pin (for Flooded Sectors)
+function createBoatIcon() {
+  return L.divIcon({
+    className: 'custom-boat-pin',
+    html: `
+      <div class="bg-sky-600 border-2 border-white text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center animate-pulse">
+        <span style="font-size: 14px;">🚤</span>
       </div>
     `,
     iconSize: [28, 28],
@@ -240,6 +254,7 @@ export function MapView({
   showResolved = false,
 }) {
   const [tileMode, setTileMode] = useState('osm');
+  const [legendCollapsed, setLegendCollapsed] = useState(false);
 
   const tileUrls = {
     osm: {
@@ -261,6 +276,9 @@ export function MapView({
   const safeAlternateLine = activeRoute?.alternativeRoute?.geometry?.coordinates;
   const primaryLine = activeRoute?.geometry?.coordinates;
   const multimodal = activeRoute?.multimodal;
+  const selectedMode =
+    activeRoute?.selectedMode ||
+    (activeRoute?.alternativeRoute ? 'safe' : (multimodal?.isMultimodal ? 'multimodal' : 'direct'));
 
   return (
     <div className="relative w-full h-full min-h-[350px] rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-slate-100">
@@ -278,41 +296,54 @@ export function MapView({
         </button>
       </div>
 
-      {/* Multimodal & Route Legend Indicator */}
+      {/* Multimodal & Route Legend Indicator - Placed on bottom-right to prevent modal overlap */}
       {activeRoute && (
-        <div className="absolute bottom-4 left-4 z-[400] bg-white/95 backdrop-blur-md p-3 rounded-2xl shadow-xl border border-slate-200 text-xs space-y-1.5 max-w-xs animate-in slide-in-from-bottom-2">
-          <div className="font-bold text-blue-950 text-[11px] uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-1">
-            <Navigation className="w-3.5 h-3.5 text-blue-700" />
-            <span>Tactical Transport Legend:</span>
+        <div className="absolute bottom-8 right-4 z-[400] bg-white/95 backdrop-blur-md p-3 rounded-2xl shadow-xl border border-slate-200 text-xs max-w-xs animate-in slide-in-from-bottom-2">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 gap-2">
+            <div className="font-bold text-blue-950 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+              <Navigation className="w-3.5 h-3.5 text-blue-700" />
+              <span>Tactical Transport Legend</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLegendCollapsed(!legendCollapsed)}
+              className="text-slate-500 hover:text-slate-800 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 cursor-pointer"
+            >
+              {legendCollapsed ? 'Show' : 'Hide'}
+            </button>
           </div>
 
-          {/* Green Leg: Safe Road */}
-          <div className="flex items-center gap-2 text-[11px] text-emerald-800 font-semibold">
-            <span className="w-4 h-1.5 bg-emerald-500 rounded-full shrink-0"></span>
-            <span>🚗 Safe Clear Road (Standard Convoy)</span>
-          </div>
+          {!legendCollapsed && (
+            <div className="space-y-1.5 pt-1.5">
+              {/* Green Leg: Safe Road */}
+              <div className="flex items-center gap-2 text-[11px] text-emerald-800 font-semibold">
+                <span className="w-4 h-1.5 bg-emerald-500 rounded-full shrink-0"></span>
+                <span>🚗 Clear Road (Ground Convoy)</span>
+              </div>
 
-          {/* Yellow Leg: Caution / Waterlogged Road */}
-          {multimodal?.yellowRoad && (
-            <div className="flex items-center gap-2 text-[11px] text-amber-800 font-semibold">
-              <span className="w-4 h-1.5 bg-amber-500 rounded-full shrink-0"></span>
-              <span>🚜 Caution / Flooded Road (Tactical Craft)</span>
-            </div>
-          )}
+              {/* Blue / Boat Leg */}
+              {(multimodal?.hazardTransit?.type === 'boat' || multimodal?.yellowRoad) && (
+                <div className="flex items-center gap-2 text-[11px] text-sky-800 font-semibold">
+                  <span className="w-4 h-1.5 bg-sky-500 rounded-full shrink-0"></span>
+                  <span>🚤 Rescue Boat (Flooded Sector)</span>
+                </div>
+              )}
 
-          {/* Blue Leg: Air Rescue Corridor */}
-          {multimodal?.blueAir && (
-            <div className="flex items-center gap-2 text-[11px] text-blue-800 font-semibold">
-              <span className="w-4 h-0.5 border-t-2 border-dashed border-blue-600 shrink-0"></span>
-              <span>🚁 Air Rescue Corridor (Helicopter Hoist)</span>
-            </div>
-          )}
+              {/* Purple / Heli Leg */}
+              {(multimodal?.hazardTransit?.type === 'air' || multimodal?.blueAir) && (
+                <div className="flex items-center gap-2 text-[11px] text-indigo-800 font-semibold">
+                  <span className="w-4 h-0.5 border-t-2 border-dashed border-indigo-600 shrink-0"></span>
+                  <span>🚁 Air Rescue (Blocked Bypass)</span>
+                </div>
+              )}
 
-          {/* Red Blocked Path */}
-          {blockedLine && (
-            <div className="flex items-center gap-2 text-[11px] text-red-700 font-semibold">
-              <span className="w-4 h-0.5 border-t-2 border-dashed border-red-600 shrink-0"></span>
-              <span>⚠️ Impassable Road (Hazard Collision)</span>
+              {/* Red Blocked Path */}
+              {blockedLine && (
+                <div className="flex items-center gap-2 text-[11px] text-red-700 font-semibold">
+                  <span className="w-4 h-0.5 border-t-2 border-dashed border-red-600 shrink-0"></span>
+                  <span>⚠️ Impassable (Hazard Collision)</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -434,68 +465,12 @@ export function MapView({
           );
         })}
 
-        {/* 1. Multimodal Segmented Transport (Green Road + Yellow Road + Blue Air) */}
-        {multimodal?.greenRoad?.coordinates && (
-          <Polyline
-            positions={multimodal.greenRoad.coordinates.map((pt) => [pt[1], pt[0]])}
-            pathOptions={{
-              color: '#10b981',
-              weight: 6,
-              opacity: 0.95,
-            }}
-          />
-        )}
+        {/* ========================================================
+            DYNAMIC ROUTE DISPLAY BASED ON ACTIVE SELECTION
+           ======================================================== */}
 
-        {multimodal?.yellowRoad?.coordinates && (
-          <Polyline
-            positions={multimodal.yellowRoad.coordinates.map((pt) => [pt[1], pt[0]])}
-            pathOptions={{
-              color: '#eab308',
-              weight: 6,
-              opacity: 0.95,
-            }}
-          />
-        )}
-
-        {multimodal?.blueAir?.coordinates && (
-          <>
-            <Polyline
-              positions={multimodal.blueAir.coordinates.map((pt) => [pt[1], pt[0]])}
-              pathOptions={{
-                color: '#2563eb',
-                weight: 5,
-                opacity: 0.95,
-                dashArray: '6, 8',
-              }}
-            />
-            {/* Helicopter Icon at midpoint/start of air corridor */}
-            {multimodal.blueAir.coordinates.length > 0 && (
-              <Marker
-                position={[
-                  multimodal.blueAir.coordinates[0][1],
-                  multimodal.blueAir.coordinates[0][0],
-                ]}
-                icon={createHeliIcon()}
-              />
-            )}
-          </>
-        )}
-
-        {/* 2. Direct Blocked Route (Red Dashed Line) */}
-        {blockedLine && (
-          <Polyline
-            positions={blockedLine.map((pt) => [pt[1], pt[0]])}
-            pathOptions={{
-              color: '#dc2626',
-              weight: 4,
-              opacity: 0.75,
-              dashArray: '8, 8',
-            }}
-          />
-        )}
-
-        {/* 3. Safe Alternative Detour Route Line (Emerald Solid Line) */}
-        {!multimodal?.isMultimodal && safeAlternateLine && (
+        {/* 1. SAFE ROAD DETOUR (Solid Emerald Line) - Prioritized when selected */}
+        {selectedMode === 'safe' && safeAlternateLine && (
           <Polyline
             positions={safeAlternateLine.map((pt) => [pt[1], pt[0]])}
             pathOptions={{
@@ -506,8 +481,108 @@ export function MapView({
           />
         )}
 
-        {/* 4. Single Primary Route Line (if no multimodal or detour) */}
-        {!multimodal && !blockedLine && !safeAlternateLine && primaryLine && (
+        {/* 2. DIRECT BLOCKED PATH (Red Dashed Line) */}
+        {selectedMode === 'blocked' && blockedLine && (
+          <Polyline
+            positions={blockedLine.map((pt) => [pt[1], pt[0]])}
+            pathOptions={{
+              color: '#dc2626',
+              weight: 5,
+              opacity: 0.85,
+              dashArray: '8, 8',
+            }}
+          />
+        )}
+
+        {/* 3. MULTIMODAL SEGMENTED ROUTE (Road 1 -> Boat/Air -> Road 2) */}
+        {selectedMode === 'multimodal' && multimodal?.isMultimodal && (
+          <>
+            {/* Leg 1: Clear Roadway (Ground Convoy) */}
+            {(multimodal.road1?.coordinates || multimodal.greenRoad?.coordinates) && (
+              <Polyline
+                positions={(multimodal.road1?.coordinates || multimodal.greenRoad.coordinates).map((pt) => [pt[1], pt[0]])}
+                pathOptions={{
+                  color: '#10b981',
+                  weight: 6,
+                  opacity: 0.95,
+                }}
+              />
+            )}
+
+            {/* Leg 2: Hazard Section (Boat for Flood, Helicopter for Blockage) */}
+            {multimodal.hazardTransit?.coordinates && (
+              <>
+                <Polyline
+                  positions={multimodal.hazardTransit.coordinates.map((pt) => [pt[1], pt[0]])}
+                  pathOptions={{
+                    color: multimodal.hazardTransit.type === 'boat' ? '#0284c7' : '#6366f1',
+                    weight: 6,
+                    opacity: 0.95,
+                    dashArray: multimodal.hazardTransit.type === 'air' ? '6, 8' : undefined,
+                  }}
+                />
+                {multimodal.hazardTransit.coordinates.length > 0 && (
+                  <Marker
+                    position={[
+                      multimodal.hazardTransit.coordinates[0][1],
+                      multimodal.hazardTransit.coordinates[0][0],
+                    ]}
+                    icon={multimodal.hazardTransit.type === 'boat' ? createBoatIcon() : createHeliIcon()}
+                  />
+                )}
+              </>
+            )}
+
+            {/* Backwards compatibility for yellowRoad / blueAir if hazardTransit wasn't set */}
+            {!multimodal.hazardTransit && multimodal.yellowRoad?.coordinates && (
+              <Polyline
+                positions={multimodal.yellowRoad.coordinates.map((pt) => [pt[1], pt[0]])}
+                pathOptions={{
+                  color: '#0284c7',
+                  weight: 6,
+                  opacity: 0.95,
+                }}
+              />
+            )}
+            {!multimodal.hazardTransit && multimodal.blueAir?.coordinates && (
+              <>
+                <Polyline
+                  positions={multimodal.blueAir.coordinates.map((pt) => [pt[1], pt[0]])}
+                  pathOptions={{
+                    color: '#6366f1',
+                    weight: 5,
+                    opacity: 0.95,
+                    dashArray: '6, 8',
+                  }}
+                />
+                {multimodal.blueAir.coordinates.length > 0 && (
+                  <Marker
+                    position={[
+                      multimodal.blueAir.coordinates[0][1],
+                      multimodal.blueAir.coordinates[0][0],
+                    ]}
+                    icon={createHeliIcon()}
+                  />
+                )}
+              </>
+            )}
+
+            {/* Leg 3: Resumed Roadway (Ground Convoy) */}
+            {multimodal.road2?.coordinates && (
+              <Polyline
+                positions={multimodal.road2.coordinates.map((pt) => [pt[1], pt[0]])}
+                pathOptions={{
+                  color: '#10b981',
+                  weight: 6,
+                  opacity: 0.95,
+                }}
+              />
+            )}
+          </>
+        )}
+
+        {/* 4. Single Primary Route Line (when clear road, no hazards) */}
+        {!multimodal?.isMultimodal && !safeAlternateLine && primaryLine && (
           <Polyline
             positions={primaryLine.map((pt) => [pt[1], pt[0]])}
             pathOptions={{
