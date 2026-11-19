@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { ShieldAlert, LogIn, Lock, Mail, Server } from 'lucide-react';
+import { ShieldAlert, LogIn, Lock, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getApiBase, setCustomApiUrl } from '../services/api';
 
 export function Login({ onSwitchToRegister }) {
   const { login } = useAuth();
@@ -9,14 +8,6 @@ export function Login({ onSwitchToRegister }) {
   const [password, setPassword] = useState('ResqSecure2026!');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showConfig, setShowConfig] = useState(false);
-  const [customUrl, setCustomUrl] = useState(getApiBase().replace(/\/api$/, ''));
-
-  const handleSaveUrl = (e) => {
-    e.preventDefault();
-    setCustomApiUrl(customUrl);
-    window.location.reload();
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -100,50 +91,6 @@ export function Login({ onSwitchToRegister }) {
           <div>• Authority: <code className="text-amber-700 font-semibold">authority@resq.ai</code> (Vigya Gupta)</div>
           <div>• Rescue Squad: <code className="text-emerald-700 font-semibold">rescue1@resq.ai</code> (Yatharth Gupta)</div>
           <div>• Citizen: <code className="text-slate-700 font-semibold">public@resq.ai</code> (Udit Maheshwari)</div>
-        </div>
-
-        {/* Backend Connection Indicator / Live Switcher */}
-        <div className="pt-2 border-t border-slate-100 flex flex-col items-center gap-1.5 text-center">
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-            <span>API Server:</span>
-            <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-700 font-mono max-w-[200px] truncate">
-              {getApiBase()}
-            </code>
-            <button
-              type="button"
-              onClick={() => setShowConfig((prev) => !prev)}
-              className="text-orange-600 hover:underline font-bold ml-1 cursor-pointer"
-            >
-              {showConfig ? 'Close' : 'Configure'}
-            </button>
-          </div>
-          {showConfig && (
-            <div className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-left space-y-2 text-xs">
-              <label className="text-[11px] font-bold text-slate-700 block">
-                Render Backend Server URL:
-              </label>
-              <div className="flex gap-1.5">
-                <input
-                  type="url"
-                  placeholder="https://resq-ai-server-xxx.onrender.com"
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                  className="flex-1 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-orange-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveUrl}
-                  className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-1 rounded-lg text-xs"
-                >
-                  Save
-                </button>
-              </div>
-              <p className="text-[10px] text-slate-400">
-                Tip: Enter your live Render URL here to connect immediately without waiting for Vercel redeployment.
-              </p>
-            </div>
-          )}
         </div>
 
         <div className="text-center text-xs text-slate-500">
