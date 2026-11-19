@@ -1,8 +1,20 @@
-const rawApiUrl = import.meta.env.VITE_API_URL;
-let API_BASE = '/api';
-if (rawApiUrl) {
-  const trimmed = rawApiUrl.replace(/\/$/, '');
-  API_BASE = trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+export function getApiBase() {
+  const custom = typeof window !== 'undefined' ? localStorage.getItem('resq_api_url') : null;
+  const rawApiUrl = custom || import.meta.env.VITE_API_URL;
+  if (rawApiUrl) {
+    const trimmed = rawApiUrl.replace(/\/$/, '');
+    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+  }
+  return '/api';
+}
+
+export function setCustomApiUrl(url) {
+  if (!url) {
+    localStorage.removeItem('resq_api_url');
+  } else {
+    const cleaned = url.trim().replace(/\/$/, '');
+    localStorage.setItem('resq_api_url', cleaned);
+  }
 }
 
 function getAuthHeaders() {
@@ -14,220 +26,283 @@ function getAuthHeaders() {
   return headers;
 }
 
+async function fetchApi(endpoint, options = {}, defaultError = 'Request failed') {
+  const url = `${getApiBase()}${endpoint}`;
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (netErr) {
+    throw new Error(
+      `Unable to reach backend (${netErr.message}). Verify your Render server is awake and connected.`
+    );
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  let data = null;
+
+  if (contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch (e) {
+      // not valid json
+    }
+  }
+
+  if (!res.ok) {
+    if (res.status === 405 || (res.status === 404 && !data)) {
+      throw new Error(
+        `Backend endpoint not found (${res.status}). Verify VITE_API_URL is configured with your Render backend URL in Vercel settings.`
+      );
+    }
+    const fallbackText = !data ? await res.text().catch(() => '') : '';
+    throw new Error(data?.error || data?.message || fallbackText || `${defaultError} (${res.status})`);
+  }
+
+  if (data === null) {
+    if (res.status === 204) return {};
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `Unexpected response from server (${res.status})`);
+  }
+
+  return data;
+}
+
 export const api = {
   // Auth
   async login(email, password) {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Login failed');
-    return data;
+    return fetchApi(
+      '/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      },
+      'Login failed'
+    );
   },
 
   async register(name, email, password, role, phone) {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password, role, phone }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Registration failed');
-    return data;
+    return fetchApi(
+      '/auth/register',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, role, phone }),
+      },
+      'Registration failed'
+    );
   },
 
   async getMe() {
-    const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch user');
-    return data;
+    return fetchApi(
+      '/auth/me',
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch user'
+    );
   },
 
   // Users & Rescue Teams
   async getRescueTeams() {
-    const res = await fetch(`${API_BASE}/users/rescue-teams`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch teams');
+    const data = await fetchApi(
+      '/users/rescue-teams',
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch teams'
+    );
     return data.rescueTeams || [];
   },
 
   async updateSquadLocation(teamId, coordinates, stationBase) {
-    const res = await fetch(`${API_BASE}/users/${teamId}/location`, {
-      method: 'PATCH',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ coordinates, station_base: stationBase }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to update squad location');
-    return data;
+    return fetchApi(
+      `/users/${teamId}/location`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ coordinates, station_base: stationBase }),
+      },
+      'Failed to update squad location'
+    );
   },
 
   // Incidents
   async getIncidents(filters = {}) {
     const params = new URLSearchParams(filters).toString();
-    const res = await fetch(`${API_BASE}/incidents?${params}`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch incidents');
+    const data = await fetchApi(
+      `/incidents?${params}`,
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch incidents'
+    );
     return data.incidents || [];
   },
 
   async createIncident(incidentData) {
-    const res = await fetch(`${API_BASE}/incidents`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(incidentData),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to submit incident');
-    return data;
+    return fetchApi(
+      '/incidents',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(incidentData),
+      },
+      'Failed to submit incident'
+    );
   },
 
   async updateIncidentStatus(id, status, assignedTeamId) {
-    const res = await fetch(`${API_BASE}/incidents/${id}/status`, {
-      method: 'PATCH',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ status, assigned_team_id: assignedTeamId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to update status');
-    return data;
+    return fetchApi(
+      `/incidents/${id}/status`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status, assigned_team_id: assignedTeamId }),
+      },
+      'Failed to update status'
+    );
   },
 
   async verifyIncident(id, verifiedCategory, severityScore) {
-    const res = await fetch(`${API_BASE}/incidents/${id}/verify`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        verified_category: verifiedCategory,
-        severity_score: severityScore,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to verify incident');
-    return data;
+    return fetchApi(
+      `/incidents/${id}/verify`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          verified_category: verifiedCategory,
+          severity_score: severityScore,
+        }),
+      },
+      'Failed to verify incident'
+    );
   },
 
   // Hazards
   async getHazards(activeOnly = false) {
-    const res = await fetch(`${API_BASE}/hazards?active_only=${activeOnly}`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch hazards');
+    const data = await fetchApi(
+      `/hazards?active_only=${activeOnly}`,
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch hazards'
+    );
     return data.hazards || [];
   },
 
   async createHazard(hazardData) {
-    const res = await fetch(`${API_BASE}/hazards`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(hazardData),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to create hazard');
-    return data;
+    return fetchApi(
+      '/hazards',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(hazardData),
+      },
+      'Failed to create hazard'
+    );
   },
 
   async toggleHazard(id, isActive) {
-    const res = await fetch(`${API_BASE}/hazards/${id}/toggle`, {
-      method: 'PATCH',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ is_active: isActive }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to toggle hazard');
-    return data;
+    return fetchApi(
+      `/hazards/${id}/toggle`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ is_active: isActive }),
+      },
+      'Failed to toggle hazard'
+    );
   },
 
   async deleteHazard(id) {
-    const res = await fetch(`${API_BASE}/hazards/${id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to delete hazard');
-    return data;
+    return fetchApi(
+      `/hazards/${id}`,
+      {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      },
+      'Failed to delete hazard'
+    );
   },
 
   // Routing
   async calculateRoute(origin, destination, incidentId) {
-    const res = await fetch(`${API_BASE}/routes/calculate`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ origin, destination, incidentId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Routing failed');
-    return data;
+    return fetchApi(
+      '/routes/calculate',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ origin, destination, incidentId }),
+      },
+      'Routing failed'
+    );
   },
 
   // Weather
   async getWeather(lat, lon) {
-    const res = await fetch(`${API_BASE}/weather/forecast?lat=${lat}&lon=${lon}`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Weather lookup failed');
-    return data;
+    return fetchApi(
+      `/weather/forecast?lat=${lat}&lon=${lon}`,
+      {
+        headers: getAuthHeaders(),
+      },
+      'Weather lookup failed'
+    );
   },
 
   // Central Regional Offices & Squad Resting HQ
   async getOffices() {
-    const res = await fetch(`${API_BASE}/offices`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch offices');
-    return data;
+    return fetchApi(
+      '/offices',
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch offices'
+    );
   },
 
   async getActiveOffice() {
-    const res = await fetch(`${API_BASE}/offices/active`, {
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch active office');
-    return data;
+    return fetchApi(
+      '/offices/active',
+      {
+        headers: getAuthHeaders(),
+      },
+      'Failed to fetch active office'
+    );
   },
 
   async setActiveOffice(officeId) {
-    const res = await fetch(`${API_BASE}/offices/set-active`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ officeId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to set active office');
-    return data;
+    return fetchApi(
+      '/offices/set-active',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ officeId }),
+      },
+      'Failed to set active office'
+    );
   },
 
   async updateOffice(officeId, updateData) {
-    const res = await fetch(`${API_BASE}/offices/${officeId}`, {
-      method: 'PATCH',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(updateData),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to update office');
-    return data;
+    return fetchApi(
+      `/offices/${officeId}`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(updateData),
+      },
+      'Failed to update office'
+    );
   },
 
   async resetSquadsToOffice() {
-    const res = await fetch(`${API_BASE}/offices/reset-squads`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to reset squads');
-    return data;
+    return fetchApi(
+      '/offices/reset-squads',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+      'Failed to reset squads'
+    );
   },
 };
-

@@ -9,7 +9,8 @@ export function SocketProvider({ children }) {
   const [liveAlerts, setLiveAlerts] = useState([]);
 
   useEffect(() => {
-    const rawSocketUrl = import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL;
+    const custom = typeof window !== 'undefined' ? localStorage.getItem('resq_api_url') : null;
+    const rawSocketUrl = custom || import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL;
     let socketTarget = '/';
     if (rawSocketUrl) {
       socketTarget = rawSocketUrl.replace(/\/$/, '').replace(/\/api$/, '');
