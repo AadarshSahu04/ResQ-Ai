@@ -55,7 +55,12 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/offices', officeRoutes);
 
-// Health check endpoint
+// Lightweight Keep-Alive Health check endpoint (for Render / external uptime pingers)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// Detailed system diagnostic health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
@@ -77,7 +82,7 @@ if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
 
   app.get('*', (req, res, next) => {
-    if (req.url.startsWith('/api') || req.url.startsWith('/socket.io')) {
+    if (req.url.startsWith('/api') || req.url.startsWith('/socket.io') || req.url.startsWith('/health')) {
       return next();
     }
     res.sendFile(path.join(clientDistPath, 'index.html'));
@@ -87,7 +92,7 @@ if (fs.existsSync(clientDistPath)) {
     res.json({
       service: 'RESQ-AI Emergency Disaster API & WebSocket Engine',
       status: 'online',
-      health: '/api/health',
+      health: '/health',
       timestamp: new Date().toISOString(),
     });
   });
