@@ -249,7 +249,19 @@ export function Dashboard() {
 
   // Calculate route dynamically from assigned squad location or active Central HQ
   async function handleRouteToIncident(incident) {
-    if (!incident.location?.coordinates) return;
+    if (!incident) return;
+    let loc = incident.location;
+    if (typeof loc === 'string') {
+      try {
+        loc = JSON.parse(loc);
+      } catch (e) {}
+    }
+    const coords = loc?.coordinates;
+    if (!coords || !Array.isArray(coords) || coords.length < 2) {
+      alert('Incident has no valid coordinates.');
+      return;
+    }
+
     try {
       let origin = null;
 
@@ -271,7 +283,7 @@ export function Dashboard() {
 
       // 3. Otherwise, pick the closest rescue squad or default to the active Central Regional HQ (Indore Rau)
       if (!origin) {
-        const [destLon, destLat] = incident.location.coordinates;
+        const [destLon, destLat] = coords;
         let closestDist = Infinity;
         let closestSquadCoords = null;
 
@@ -289,9 +301,17 @@ export function Dashboard() {
         origin = closestSquadCoords || activeOffice?.location?.coordinates || [75.8118, 22.6288];
       }
 
-      const destination = incident.location.coordinates;
+      const destination = coords;
       const routeRes = await api.calculateRoute(origin, destination, incident.id);
-      setActiveRouteData({ ...routeRes, incidentId: incident.id });
+      const defaultMode =
+        routeRes.selectedMode ||
+        (routeRes.alternativeRoute ? 'safe' : (routeRes.multimodal?.isMultimodal ? 'multimodal' : 'safe'));
+
+      setActiveRouteData({
+        ...routeRes,
+        incidentId: incident.id,
+        selectedMode: defaultMode,
+      });
     } catch (err) {
       alert(`Routing error: ${err.message}`);
     }

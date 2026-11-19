@@ -137,18 +137,27 @@ export function RescueTeamView() {
   }
 
   async function handleSelectIncident(inc, originCoords = squadCoords) {
+    if (!inc) return;
     setSelectedIncident(inc);
-    if (!inc.location?.coordinates) return;
+    let loc = inc.location;
+    if (typeof loc === 'string') {
+      try {
+        loc = JSON.parse(loc);
+      } catch (e) {}
+    }
+    const destCoords = loc?.coordinates;
+    if (!destCoords || !Array.isArray(destCoords) || destCoords.length < 2) return;
 
     setRoutingLoading(true);
     setStatusMessage(`Computing hazard-free routing corridor to Incident #${inc.id}...`);
 
     try {
-      const destCoords = inc.location.coordinates; // [lon, lat]
       const routeRes = await api.calculateRoute(originCoords, destCoords, inc.id);
-      const defaultMode = routeRes.selectedMode || (routeRes.alternativeRoute ? 'safe' : (routeRes.multimodal?.isMultimodal ? 'multimodal' : 'safe'));
+      const defaultMode =
+        routeRes.selectedMode ||
+        (routeRes.alternativeRoute ? 'safe' : (routeRes.multimodal?.isMultimodal ? 'multimodal' : 'safe'));
       setRouteViewMode(defaultMode);
-      setActiveRouteData({ ...routeRes, selectedMode: defaultMode });
+      setActiveRouteData({ ...routeRes, incidentId: inc.id, selectedMode: defaultMode });
 
       if (routeRes.route?.intersectsHazard || routeRes.blockedRoute) {
         setStatusMessage(`⚠️ Direct path blocked by hazard! Safe alternative detour corridor computed.`);

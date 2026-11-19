@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -176,18 +176,27 @@ function AutoMapController({ center, zoom, activeRoute }) {
     };
   }, [map]);
 
+  // When an active navigation route is computed or updated, dismiss any open popups immediately
+  useEffect(() => {
+    if (activeRoute) {
+      map.closePopup();
+    }
+  }, [activeRoute, map]);
+
   useEffect(() => {
     // 1. If active navigation route exists, frame the entire corridor
     const routeCoords =
-      activeRoute?.geometry?.coordinates ||
+      activeRoute?.route?.geometry?.coordinates ||
       activeRoute?.alternativeRoute?.geometry?.coordinates ||
-      activeRoute?.blockedRoute?.geometry?.coordinates;
+      activeRoute?.geometry?.coordinates ||
+      activeRoute?.blockedRoute?.geometry?.coordinates ||
+      activeRoute?.multimodal?.road1?.coordinates;
 
     if (routeCoords && Array.isArray(routeCoords) && routeCoords.length > 1) {
       try {
         const latLngs = routeCoords.map(([lon, lat]) => [lat, lon]);
         const bounds = L.latLngBounds(latLngs);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
         return;
       } catch (err) {
         console.warn('fitBounds error:', err);
@@ -226,6 +235,171 @@ function MapClickHandler({ isDrawing, onAddPoint, onMapClick, isSettingSquadLoca
     },
   });
   return null;
+}
+
+// Individual Incident Marker with interactive popup that auto-closes on action click
+function IncidentMarker({
+  incident,
+  userRole,
+  onVerifyIncident,
+  onAssignTeam,
+  onResolveIncident,
+  onRouteToIncident,
+}) {
+  const map = useMap();
+  const markerRef = useRef(null);
+
+  let loc = incident.location;
+  if (typeof loc === 'string') {
+    try {
+      loc = JSON.parse(loc);
+    } catch (e) {}
+  }
+  if (!loc || !loc.coordinates) return null;
+
+  const [lon, lat] = loc.coordinates;
+
+  const handleNavClick = (e) => {
+    e.stopPropagation();
+    // 1. Immediately dismiss popup so it does not block the tactical route/corridor view
+    if (markerRef.current) markerRef.current.closePopup();
+    map.closePopup();
+
+    // 2. Trigger routing to incident
+    if (onRouteToIncident) {
+      onRouteToIncident(incident);
+    }
+  };
+
+  const handleDispatchClick = (e) => {
+    e.stopPropagation();
+    if (markerRef.current) markerRef.current.closePopup();
+    map.closePopup();
+    if (onAssignTeam) onAssignTeam(incident);
+  };
+
+  const handleResolveClick = (e) => {
+    e.stopPropagation();
+    if (markerRef.current) markerRef.current.closePopup();
+    map.closePopup();
+    if (onResolveIncident) onResolveIncident(incident.id);
+  };
+
+  const handleVerifyClick = (e) => {
+    e.stopPropagation();
+    if (markerRef.current) markerRef.current.closePopup();
+    map.closePopup();
+    if (onVerifyIncident) onVerifyIncident(incident);
+  };
+
+  return (
+    <Marker
+      ref={markerRef}
+      position={[lat, lon]}
+      icon={createCustomIcon(
+        incident.predicted_category,
+        incident.severity_score,
+        incident.requires_manual_verification
+      )}
+    >
+      <Popup className="emergency-light-popup">
+        <div className="p-2.5 text-slate-800 min-w-[250px] max-w-[310px]">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1.5">
+            <span className="font-bold text-sm text-blue-950">
+              #{incident.id} {incident.predicted_category}
+            </span>
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                incident.status === 'Resolved'
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : incident.status === 'In Progress'
+                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                  : 'bg-red-100 text-red-800 border border-red-300'
+              }`}
+            >
+              {incident.status}
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-700 mt-2 font-medium line-clamp-3">
+            "{incident.description}"
+          </p>
+
+          <div className="mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-[11px] space-y-1">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">AI Confidence:</span>
+              <span
+                className={`font-mono font-bold ${
+                  incident.confidence_score < 0.6
+                    ? 'text-amber-600'
+                    : 'text-emerald-700'
+                }`}
+              >
+                {Math.round(incident.confidence_score * 100)}%
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-medium">Severity Score:</span>
+              <span className="font-mono font-bold text-red-600">
+                {Math.round(incident.severity_score * 100)} / 100
+              </span>
+            </div>
+
+            {incident.assigned_team_name && (
+              <div className="text-[11px] text-blue-700 font-semibold pt-0.5">
+                Assigned: {incident.assigned_team_name}
+              </div>
+            )}
+          </div>
+
+          {/* Actions Bar */}
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200">
+            {incident.requires_manual_verification && onVerifyIncident && (
+              <button
+                onClick={handleVerifyClick}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>Verify AI Prediction</span>
+              </button>
+            )}
+
+            {['Admin', 'Disaster Authority'].includes(userRole) && onAssignTeam && (
+              <button
+                onClick={handleDispatchClick}
+                className="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+              >
+                <span>Dispatch Squad</span>
+              </button>
+            )}
+
+            {['Admin', 'Disaster Authority', 'Rescue Team'].includes(userRole) &&
+              incident.status !== 'Resolved' &&
+              onResolveIncident && (
+                <button
+                  onClick={handleResolveClick}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Mark Resolved</span>
+                </button>
+              )}
+
+            {onRouteToIncident && (
+              <button
+                onClick={handleNavClick}
+                className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs py-1.5 px-2.5 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+              >
+                <Navigation className="w-3 h-3" />
+                <span>Nav Route</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
 }
 
 export function MapView({
@@ -274,11 +448,11 @@ export function MapView({
   // Extract route lines (Multimodal vs Blocked vs Safe Alternate)
   const blockedLine = activeRoute?.blockedRoute?.geometry?.coordinates;
   const safeAlternateLine = activeRoute?.alternativeRoute?.geometry?.coordinates;
-  const primaryLine = activeRoute?.geometry?.coordinates;
+  const primaryLine = activeRoute?.route?.geometry?.coordinates || activeRoute?.geometry?.coordinates;
   const multimodal = activeRoute?.multimodal;
   const selectedMode =
     activeRoute?.selectedMode ||
-    (activeRoute?.alternativeRoute ? 'safe' : (multimodal?.isMultimodal ? 'multimodal' : 'direct'));
+    (activeRoute?.alternativeRoute ? 'safe' : (multimodal?.isMultimodal ? 'multimodal' : 'safe'));
 
   return (
     <div className="relative w-full h-full min-h-[350px] rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-slate-100">
@@ -469,10 +643,10 @@ export function MapView({
             DYNAMIC ROUTE DISPLAY BASED ON ACTIVE SELECTION
            ======================================================== */}
 
-        {/* 1. SAFE ROAD DETOUR (Solid Emerald Line) - Prioritized when selected */}
-        {selectedMode === 'safe' && safeAlternateLine && (
+        {/* 1. SAFE ROAD ROUTE (Solid Emerald Line) - Prioritized when selected */}
+        {selectedMode === 'safe' && (safeAlternateLine || primaryLine) && (
           <Polyline
-            positions={safeAlternateLine.map((pt) => [pt[1], pt[0]])}
+            positions={(safeAlternateLine || primaryLine).map((pt) => [pt[1], pt[0]])}
             pathOptions={{
               color: '#16a34a',
               weight: 6,
@@ -482,9 +656,9 @@ export function MapView({
         )}
 
         {/* 2. DIRECT BLOCKED PATH (Red Dashed Line) */}
-        {selectedMode === 'blocked' && blockedLine && (
+        {selectedMode === 'blocked' && (blockedLine || primaryLine) && (
           <Polyline
-            positions={blockedLine.map((pt) => [pt[1], pt[0]])}
+            positions={(blockedLine || primaryLine).map((pt) => [pt[1], pt[0]])}
             pathOptions={{
               color: '#dc2626',
               weight: 5,
@@ -668,7 +842,11 @@ export function MapView({
         {/* Incident Markers (Resolved disasters strictly removed from active map) */}
         {incidents
           .filter((incident) => {
-            if (!incident.location || !incident.location.coordinates) return false;
+            let loc = incident.location;
+            if (typeof loc === 'string') {
+              try { loc = JSON.parse(loc); } catch (e) {}
+            }
+            if (!loc || !loc.coordinates) return false;
             // Never render resolved incidents unless explicitly requested via showResolved prop
             // or if an active navigation route is currently focused on this specific incident
             if (!showResolved && incident.status === 'Resolved') {
@@ -677,118 +855,17 @@ export function MapView({
             }
             return true;
           })
-          .map((incident) => {
-          const [lon, lat] = incident.location.coordinates;
-
-          return (
-            <Marker
+          .map((incident) => (
+            <IncidentMarker
               key={incident.id}
-              position={[lat, lon]}
-              icon={createCustomIcon(
-                incident.predicted_category,
-                incident.severity_score,
-                incident.requires_manual_verification
-              )}
-            >
-              <Popup className="emergency-light-popup">
-                <div className="p-2.5 text-slate-800 min-w-[250px] max-w-[310px]">
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1.5">
-                    <span className="font-bold text-sm text-blue-950">
-                      #{incident.id} {incident.predicted_category}
-                    </span>
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                        incident.status === 'Resolved'
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : incident.status === 'In Progress'
-                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                          : 'bg-red-100 text-red-800 border border-red-300'
-                      }`}
-                    >
-                      {incident.status}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-700 mt-2 font-medium line-clamp-3">
-                    "{incident.description}"
-                  </p>
-
-                  <div className="mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-[11px] space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 font-medium">AI Confidence:</span>
-                      <span
-                        className={`font-mono font-bold ${
-                          incident.confidence_score < 0.60
-                            ? 'text-amber-600'
-                            : 'text-emerald-700'
-                        }`}
-                      >
-                        {Math.round(incident.confidence_score * 100)}%
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 font-medium">Severity Score:</span>
-                      <span className="font-mono font-bold text-red-600">
-                        {Math.round(incident.severity_score * 100)} / 100
-                      </span>
-                    </div>
-
-                    {incident.assigned_team_name && (
-                      <div className="text-[11px] text-blue-700 font-semibold pt-0.5">
-                        Assigned: {incident.assigned_team_name}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200">
-                    {incident.requires_manual_verification && onVerifyIncident && (
-                      <button
-                        onClick={() => onVerifyIncident(incident)}
-                        className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        <span>Verify AI Prediction</span>
-                      </button>
-                    )}
-
-                    {['Admin', 'Disaster Authority'].includes(userRole) && onAssignTeam && (
-                      <button
-                        onClick={() => onAssignTeam(incident)}
-                        className="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
-                      >
-                        <span>Dispatch Squad</span>
-                      </button>
-                    )}
-
-                    {['Admin', 'Disaster Authority', 'Rescue Team'].includes(userRole) &&
-                      incident.status !== 'Resolved' &&
-                      onResolveIncident && (
-                        <button
-                          onClick={() => onResolveIncident(incident.id)}
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Mark Resolved</span>
-                        </button>
-                      )}
-
-                    {onRouteToIncident && (
-                      <button
-                        onClick={() => onRouteToIncident(incident)}
-                        className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs py-1.5 px-2.5 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer"
-                      >
-                        <Navigation className="w-3 h-3" />
-                        <span>Nav Route</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          );
-        })}
+              incident={incident}
+              userRole={userRole}
+              onVerifyIncident={onVerifyIncident}
+              onAssignTeam={onAssignTeam}
+              onResolveIncident={onResolveIncident}
+              onRouteToIncident={onRouteToIncident}
+            />
+          ))}
 
         {/* Drawing Preview Polygon */}
         {isDrawing && drawingPoints.length > 0 && (

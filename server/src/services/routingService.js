@@ -126,6 +126,12 @@ export async function calculateRouteWithHazardAvoidance(origin, destination) {
   const primaryHits = checkRouteHazards(primaryRoute, activeHazards);
   const primaryIntersects = primaryHits.length > 0;
 
+  // Check if destination itself is trapped inside any active hazard (e.g. in mid-flood)
+  const destinationInsideHazard = activeHazards.some((h) => {
+    const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
+    return poly && isPointInsideOrNearPolygon([endLon, endLat], poly, 0.001);
+  });
+
   // 1. Build Multimodal Transport Breakdown (Road -> Boat/Heli -> Road)
   const multimodal = computeMultimodalTransport(
     primaryRoute,
@@ -133,7 +139,8 @@ export async function calculateRouteWithHazardAvoidance(origin, destination) {
     startLon,
     startLat,
     endLon,
-    endLat
+    endLat,
+    destinationInsideHazard
   );
 
   let safeRoadDetour = null;
@@ -160,6 +167,7 @@ export async function calculateRouteWithHazardAvoidance(origin, destination) {
       blockedRoute: null,
       hasAlternative: false,
       selectedMode: 'safe',
+      destinationInsideHazard: false,
       hazardsDetectedCount: 0,
     };
   }
@@ -191,36 +199,34 @@ export async function calculateRouteWithHazardAvoidance(origin, destination) {
     }
   }
 
-  // 3. If no candidate alternative, compute real road detour by querying OSRM through bypass waypoints
+  // 3. If no candidate alternative, compute real road detour around all intersecting hazards
   if (!safeRoadDetour) {
     safeRoadDetour = await computeRealRoadDetour(
       startLon,
       startLat,
       endLon,
       endLat,
-      primaryHits[0],
+      primaryHits,
       activeHazards,
       primaryRoute
     );
   }
 
-  // Check if destination itself is trapped inside any active hazard
-  const destinationInsideHazard = activeHazards.some((h) => {
-    const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
-    return poly && isPointInsideOrNearPolygon([endLon, endLat], poly, 0.001);
-  });
-
   // Decision rule:
-  // If safe road detour exists and destination is NOT inside hazard, DEFAULT TO SAFE ROAD DETOUR!
-  // If destination is inside hazard, squad MUST use multimodal (road up to hazard, boat/airlift inside).
-  const defaultMode = safeRoadDetour && !destinationInsideHazard ? 'safe' : 'multimodal';
+  // User Rule 2: When there is a longer and safer way, the algorithm MUST choose the route which is
+  // safer not shorter. The transition should ONLY happen if there is no physical way to reach destination
+  // (e.g. the destination is in mid flood).
+  const defaultMode = destinationInsideHazard ? 'multimodal' : 'safe';
+
+  // If destination is not inside hazard, safe road detour is prioritized
+  const activeSelectedRoute = defaultMode === 'safe' && safeRoadDetour ? safeRoadDetour : primaryRoute;
 
   return {
     status: 'Ok',
     hazardIntersects: true,
     hazardReason: `Traverses active ${primaryHits.map(h => h.type).join(', ')} zone (${primaryHits.map(h => h.notes || h.type).join('; ')})`,
     multimodal,
-    route: defaultMode === 'safe' ? safeRoadDetour : primaryRoute,
+    route: activeSelectedRoute,
     alternativeRoute: safeRoadDetour,
     blockedRoute,
     hasAlternative: !!safeRoadDetour,
@@ -272,7 +278,13 @@ function polylineDistanceMeters(pts) {
  * - When hazard area is over, squad immediately RESUMES ROADWAYS with ground vehicles!
  * - Airways / Boats are used ONLY for that particular hazard distance, NOT for the entire route.
  */
-function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, endLat) {
+/**
+ * Slices an intersected route into clear road corridor, tactical hazard crossing
+ * (Boat for Flood, Helicopter for Blockage), and resumed road driving.
+ * If destination is inside the hazard (e.g. in mid-flood), the route terminates
+ * inside the hazard upon arrival via boat or airlift.
+ */
+function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, endLat, destinationInsideHazard = false) {
   const coords = route.geometry?.coordinates || [
     [startLon, startLat],
     [endLon, endLat],
@@ -313,31 +325,55 @@ function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, 
   // Find exact waypoint indices where the route enters and exits the hazard
   let enterIndex = -1;
   let exitIndex = -1;
-  let primaryHazard = hazards[0];
+  let dominantHazard = hazards[0];
 
-  for (let i = 0; i < coords.length; i++) {
-    const pt = coords[i];
-    for (const h of hazards) {
+  if (destinationInsideHazard) {
+    // When destination is inside a hazard (e.g. stranded in mid-flood),
+    // ground vehicle drives on roads as far as possible up to THAT destination hazard's boundary.
+    const destHazard = hazards.find((h) => {
       const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
-      if (poly && isPointInsideOrNearPolygon(pt, poly, 0.002)) {
-        if (enterIndex === -1) {
-          enterIndex = i;
-          primaryHazard = h;
-        }
-        exitIndex = i;
+      return poly && isPointInsideOrNearPolygon([endLon, endLat], poly, 0.002);
+    }) || hazards[0];
+
+    dominantHazard = destHazard;
+    const destPoly = destHazard.area?.coordinates?.[0] || destHazard.area?.coordinates;
+
+    for (let i = 0; i < coords.length; i++) {
+      if (destPoly && isPointInsideOrNearPolygon(coords[i], destPoly, 0.002)) {
+        enterIndex = i;
+        break;
       }
+    }
+
+    if (enterIndex === -1) {
+      enterIndex = Math.max(0, coords.length - 5);
+    }
+    exitIndex = coords.length - 1;
+  } else {
+    // Intermediate hazard: find boundary entry and exit for that hazard only
+    for (let i = 0; i < coords.length; i++) {
+      const pt = coords[i];
+      for (const h of hazards) {
+        const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
+        if (poly && isPointInsideOrNearPolygon(pt, poly, 0.002)) {
+          if (enterIndex === -1) {
+            enterIndex = i;
+            dominantHazard = h;
+          }
+          exitIndex = i;
+        }
+      }
+    }
+
+    if (enterIndex === -1) {
+      enterIndex = Math.max(1, Math.floor(coords.length * 0.35));
+      exitIndex = Math.min(coords.length - 1, Math.floor(coords.length * 0.65));
+    } else if (exitIndex < enterIndex) {
+      exitIndex = enterIndex;
     }
   }
 
-  // Fallback division if discrete coordinates jumped across boundary
-  if (enterIndex === -1) {
-    enterIndex = Math.max(1, Math.floor(coords.length * 0.35));
-    exitIndex = Math.min(coords.length - 1, Math.floor(coords.length * 0.65));
-  } else if (exitIndex < enterIndex) {
-    exitIndex = enterIndex;
-  }
-
-  const isFlood = (primaryHazard?.type || '').toLowerCase() === 'flood';
+  const isFlood = (dominantHazard?.type || '').toLowerCase().includes('flood');
 
   // 1. Leg 1: Clear Roadway (Ground Convoy) up to hazard entry
   const road1Coords = coords.slice(0, Math.max(1, enterIndex + 1));
@@ -364,7 +400,9 @@ function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, 
       vehicle: 'Tactical Rescue Boat / Amphibious Craft',
       color: '#0284c7', // Cyan/Sky Blue
       icon: 'boat',
-      description: 'Navigates flooded street sector via motorized rescue boat to bypass submerged roadways.',
+      description: destinationInsideHazard
+        ? 'Deployed rescue boat across floodwaters directly navigating to trapped victims.'
+        : 'Navigates flooded street sector via motorized rescue boat to bypass submerged roadways.',
     };
   } else {
     // RED HAZARD (Blockage): Squad uses Air Rescue Helicopter across blocked road
@@ -380,13 +418,16 @@ function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, 
       vehicle: 'Mi-17 / ALH Dhruv Air Rescue Helicopter',
       color: '#6366f1', // Indigo / Purple Airway
       icon: 'helicopter',
-      description: 'Aerial airlift corridor bypassing blocked / collapsed road infrastructure.',
+      description: destinationInsideHazard
+        ? 'Aerial winch hoist and tactical helicopter drop directly onto blocked disaster structure.'
+        : 'Aerial airlift corridor bypassing blocked / collapsed road infrastructure.',
     };
   }
 
   // 3. Leg 3: Resumed Roadway (Ground Convoy) after hazard area is over
+  // Only exists if destination was NOT inside the hazard itself
   let road2 = null;
-  if (exitIndex < coords.length - 1) {
+  if (!destinationInsideHazard && exitIndex < coords.length - 1) {
     const road2Coords = coords.slice(exitIndex);
     if (road2Coords.length >= 2) {
       const road2Dist = Math.max(80, polylineDistanceMeters(road2Coords));
@@ -408,6 +449,7 @@ function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, 
 
   return {
     isMultimodal: true,
+    destinationInsideHazard,
     road1: {
       coordinates: road1Coords,
       distance: road1Dist,
@@ -436,37 +478,69 @@ function computeMultimodalTransport(route, hazards, startLon, startLat, endLon, 
 }
 
 /**
- * Computes a real road detour around a hazard by sampling arterial road corridors
+ * Computes a real road detour around active hazards by testing progressive bypass corridors
  * and querying OSRM (so the route strictly adheres to OpenStreetMap roads).
+ * Prioritizes safer, longer roadway routes over any transit transitions.
  */
-async function computeRealRoadDetour(startLon, startLat, endLon, endLat, hazard, allHazards, fallbackBaseRoute) {
+async function computeRealRoadDetour(startLon, startLat, endLon, endLat, intersectingHazards, allHazards, fallbackBaseRoute) {
   try {
-    const poly = hazard.area.coordinates[0] || hazard.area.coordinates;
+    const hazardsList = Array.isArray(intersectingHazards)
+      ? intersectingHazards
+      : [intersectingHazards];
+
+    if (hazardsList.length === 0) return null;
+
+    // Calculate union bounding box of all intersecting hazards
     let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
-    for (const [lon, lat] of poly) {
-      if (lon < minLon) minLon = lon;
-      if (lon > maxLon) maxLon = lon;
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
+    for (const h of hazardsList) {
+      const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
+      if (poly) {
+        for (const [lon, lat] of poly) {
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        }
+      }
     }
 
     const cLon = (minLon + maxLon) / 2;
     const cLat = (minLat + maxLat) / 2;
-    const spanLon = maxLon - minLon;
-    const spanLat = maxLat - minLat;
+    const midLon = (startLon + endLon) / 2;
+    const midLat = (startLat + endLat) / 2;
 
-    // Detour waypoints on surrounding arterial road corridors
-    const detourOptions = [
-      [maxLon + Math.max(spanLon * 1.1, 0.020), cLat], // East bypass
-      [minLon - Math.max(spanLon * 1.1, 0.020), cLat], // West bypass
-      [cLon, maxLat + Math.max(spanLat * 1.1, 0.018)], // North arterial
-      [cLon, minLat - Math.max(spanLat * 1.1, 0.018)], // South ring road
-    ];
+    // Progressive bypass margins: near (0.025 ~2.8km), mid (0.050 ~5.5km), wide (0.080 ~8.8km - Ring Road / Bypass)
+    const margins = [0.025, 0.050, 0.080];
+    const candidateWaypoints = [];
+
+    for (const m of margins) {
+      candidateWaypoints.push([maxLon + m, cLat]); // East
+      candidateWaypoints.push([minLon - m, cLat]); // West
+      candidateWaypoints.push([cLon, maxLat + m]); // North
+      candidateWaypoints.push([cLon, minLat - m]); // South
+      candidateWaypoints.push([maxLon + m, maxLat + m]); // North-East
+      candidateWaypoints.push([maxLon + m, minLat - m]); // South-East
+      candidateWaypoints.push([minLon - m, maxLat + m]); // North-West
+      candidateWaypoints.push([minLon - m, minLat - m]); // South-West
+    }
+
+    // Indore Key Emergency Road Corridors (Outer Bypass NH-52, Super Corridor, MR-10, Ring Road)
+    candidateWaypoints.push([75.9250, midLat]); // Eastern Bypass Road (NH-52)
+    candidateWaypoints.push([midLon, 22.7650]); // Northern Corridor / MR-10
+    candidateWaypoints.push([midLon, 22.6700]); // Southern Ring Road Corridor
+    candidateWaypoints.push([75.8050, midLat]); // Western Bypass Corridor
 
     let bestCandidate = null;
     let shortestDist = Infinity;
 
-    for (const [wLon, wLat] of detourOptions) {
+    for (const [wLon, wLat] of candidateWaypoints) {
+      // Discard waypoint if it falls inside any hazard polygon
+      const wpInsideHazard = allHazards.some((h) => {
+        const poly = h.area?.coordinates?.[0] || h.area?.coordinates;
+        return poly && isPointInsideOrNearPolygon([wLon, wLat], poly, 0.001);
+      });
+      if (wpInsideHazard) continue;
+
       const detourUrl = `${OSRM_BASE_URL}/route/v1/driving/${startLon},${startLat};${wLon.toFixed(6)},${wLat.toFixed(6)};${endLon},${endLat}?overview=full&geometries=geojson&steps=true`;
 
       try {
@@ -479,7 +553,7 @@ async function computeRealRoadDetour(startLon, startLat, endLon, endLat, hazard,
           const data = await res.json();
           if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
             const candidate = data.routes[0];
-            // VERIFY candidate does NOT intersect any active hazard!
+            // STRICT VERIFICATION: candidate MUST be 100% hazard-free!
             const candHits = checkRouteHazards(candidate, allHazards);
             if (candHits.length === 0) {
               if (candidate.distance < shortestDist) {
@@ -495,7 +569,7 @@ async function computeRealRoadDetour(startLon, startLat, endLon, endLat, hazard,
     }
 
     if (bestCandidate) {
-      // Format steps
+      // Format turn-by-turn guidance steps
       if (bestCandidate.legs) {
         const allSteps = [];
         for (const leg of bestCandidate.legs) {
@@ -513,26 +587,21 @@ async function computeRealRoadDetour(startLon, startLat, endLon, endLat, hazard,
         label: 'Safe Road Detour Corridor (Hazard Bypass)',
       };
     }
+
+    // Synthesize realistic arterial road detour if OSRM was offline or rate-limited
+    return createRealisticRoadDetour(startLon, startLat, endLon, endLat, minLon, maxLon, minLat, maxLat, allHazards);
   } catch (err) {
     console.warn(`[Real Road Detour Error]: ${err.message}`);
+    return null;
   }
-
-  // If destination itself is inside hazard or no clean detour exists, return null
-  return null;
 }
 
 /**
  * Creates realistic road network detour aligned to street grids rather than raw diagonals
  */
-function createRealisticRoadDetour(startLon, startLat, endLon, endLat, hazard) {
-  const poly = hazard.area.coordinates[0] || hazard.area.coordinates;
-  let maxLon = -180, minLat = 90;
-  for (const [lon, lat] of poly) {
-    if (lon > maxLon) maxLon = lon;
-    if (lat < minLat) minLat = lat;
-  }
-
-  const bypassLon = maxLon + 0.018;
+function createRealisticRoadDetour(startLon, startLat, endLon, endLat, minLon, maxLon, minLat, maxLat, allHazards) {
+  const spanLon = maxLon - minLon;
+  const bypassLon = maxLon + Math.max(spanLon * 1.2, 0.035);
   const bypassLat = (startLat + endLat) / 2;
 
   // L-shaped and grid-aligned turns mimicking city roads (AB Road / Eastern Ring Road)

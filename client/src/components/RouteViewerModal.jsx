@@ -25,6 +25,11 @@ export function RouteViewerModal({ routeData, onClose, onClearRoute, onSelectRou
   const initialVariant = routeData.selectedMode || (routeData.alternativeRoute ? 'safe' : (hasMultimodal ? 'multimodal' : 'safe'));
   const [viewVariant, setViewVariant] = useState(initialVariant);
 
+  useEffect(() => {
+    const nextVariant = routeData.selectedMode || (routeData.alternativeRoute ? 'safe' : (hasMultimodal ? 'multimodal' : 'safe'));
+    setViewVariant(nextVariant);
+  }, [routeData]);
+
   const activeDisplayRoute =
     viewVariant === 'blocked' && routeData.blockedRoute
       ? routeData.blockedRoute
