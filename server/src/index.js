@@ -82,6 +82,15 @@ if (fs.existsSync(clientDistPath)) {
     }
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
+} else {
+  app.get('/', (req, res) => {
+    res.json({
+      service: 'RESQ-AI Emergency Disaster API & WebSocket Engine',
+      status: 'online',
+      health: '/api/health',
+      timestamp: new Date().toISOString(),
+    });
+  });
 }
 
 // 404 handler for unmatched API routes

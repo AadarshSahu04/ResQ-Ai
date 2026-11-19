@@ -6,7 +6,7 @@
     "server": "cd server && npm run dev",
     "client": "cd client && npm run dev",
     "start": "node server/src/index.js",
-    "build": "cd client && npm run build",
+    "build": "cd client && npm install && npm run build",
     "migrate": "cd server && npm run migrate",
     "install-all": "cd server && npm install && cd ../client && npm install"
   },
